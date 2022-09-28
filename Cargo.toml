@@ -5,6 +5,8 @@ edition = "2021"
 authors = ["Nils Mathieu <nmathieu@student.42.fr>"]
 description = "a simply CLI tool to play the Skyscrapper game"
 readme = "README.md"
+license-file = "LICENSE.md"
+repository = "https://github.com/nils-mathieu/skyscrapper-cli"
 
 [profile.release]
 lto = true
