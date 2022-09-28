@@ -48,19 +48,35 @@ It's possible to require a specific output format.
 If you want reproductible results, you can use the `--seed` option. Using twice the same seed will result in twice the same board.
 
 ```txt
->_ ./skyscrapper-cli generate --seed 12314344 5
-  4 2 1 2
-3 1 2 4 3 2
-3 2 1 3 4 1
-2 3 4 2 1 3
-1 4 3 1 2 3
-  1 2 4 2
+>_ ./skyscrapper-cli generate --seed 12312323 5
+  3 2 3 1 2
+2 3 1 2 5 4 2
+2 4 5 1 3 2 3
+3 1 4 3 2 5 1
+3 2 3 5 4 1 3
+1 5 2 4 1 3 3
+  1 4 2 3 2
 
->_ ./skyscrapper-cli generate --seed 12314344 5
-  4 2 1 2
-3 1 2 4 3 2
-3 2 1 3 4 1
-2 3 4 2 1 3
-1 4 3 1 2 3
-  1 2 4 2
+>_ ./skyscrapper-cli generate --seed 12312323 5
+  3 2 3 1 2
+2 3 1 2 5 4 2
+2 4 5 1 3 2 3
+3 1 4 3 2 5 1
+3 2 3 5 4 1 3
+1 5 2 4 1 3 3
+  1 4 2 3 2
+```
+
+## Installation
+
+At the moment, this tool is still in early developement, some other features are planned, and no binary is directly available.
+
+If you have Rust installed on your machine, you can use the following commands to download and compile it into a binary file.
+
+```txt
+git clone https://github.com/nils-mathieu/skyscrapper-cli
+cd skyscrapper-cli
+cargo build --release
+TARGET_DIR=$(cargo metadata --format-version=1 | grep -o '"target_directory":"[^"]*"' | grep -o '"[^"]*"$' | grep -o '[^"]*')
+echo "output build located at $TARGET_DIR/release/skyscrapper-cli"
 ```
