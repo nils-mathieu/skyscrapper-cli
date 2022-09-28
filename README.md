@@ -45,6 +45,18 @@ It's possible to require a specific output format.
 1 4 2 2 3 1 3 2 1 2 3 2 3 2 1 2
 ```
 
+You can even require multiple output formats at once.
+
+```txt
+>_ ./skyscrapper-cli generate -o header-line -o solution 4
+1 4 2 2 3 1 3 2 1 2 3 2 3 2 1 2
+
+4 1 3 2
+3 2 4 1
+1 3 2 4
+2 4 1 3
+```
+
 If you want reproductible results, you can use the `--seed` option. Using twice the same seed will result in twice the same board.
 
 ```txt

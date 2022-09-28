@@ -11,7 +11,7 @@ pub struct Args {
 
 /// The output type of the [`Command::Generate`] subcommand.
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum GenerateOutput {
+pub enum OutputFormat {
     /// Only print the solution.
     Solution,
     /// Only print the header.
@@ -28,8 +28,8 @@ pub enum Command {
     /// Generate a random Skyscrapper header.
     Generate {
         /// Whether the solution should be displayed rather than the header.
-        #[clap(long, short = 'o', value_enum, default_value_t = GenerateOutput::Both)]
-        output: GenerateOutput,
+        #[clap(long, short = 'o', value_enum)]
+        output: Vec<OutputFormat>,
         /// Provides the seed that should be used to generate the board.
         #[clap(long)]
         seed: Option<u64>,

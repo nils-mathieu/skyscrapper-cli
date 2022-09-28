@@ -41,23 +41,19 @@ fn main() {
             let stdout = std::io::stdout();
             let mut stdout = stdout.lock();
 
-            // Depending on the requested output, print the solution in a certain way.
-            match output {
-                args::GenerateOutput::Solution => {
-                    for chunk in solution.chunks_exact(size as usize) {
-                        let _ = print_iterator(&mut stdout, chunk, log10(size));
-                        let _ = stdout.write_all(b"\n");
-                    }
+            // If no output has been specified, use the `OutputFormat::Both` format.
+            if output.is_empty() {
+                let _ = print_solution(&mut stdout, &solution, size, &args::OutputFormat::Both);
+            } else {
+                let mut iter = output.iter();
+
+                if let Some(first) = iter.next() {
+                    let _ = print_solution(&mut stdout, &solution, size, first);
                 }
-                args::GenerateOutput::HeaderLine => {
-                    let header = generate::solution_to_header(&solution, size);
-                    let _ = print_iterator(&mut stdout, header.as_ref(), 0);
-                }
-                args::GenerateOutput::Header => {
-                    let _ = print_both(&mut stdout, &solution, size, false);
-                }
-                args::GenerateOutput::Both => {
-                    let _ = print_both(&mut stdout, &solution, size, true);
+
+                for output in iter {
+                    let _ = stdout.write_all(b"\n");
+                    let _ = print_solution(&mut stdout, &solution, size, output);
                 }
             }
         }
@@ -71,6 +67,36 @@ fn log10(mut size: u8) -> usize {
         log10 += 1;
     }
     log10
+}
+
+/// Prints the provided solution according to the provided output format.
+fn print_solution(
+    w: &mut dyn io::Write,
+    solution: &[u8],
+    size: u8,
+    output: &args::OutputFormat,
+) -> io::Result<()> {
+    match output {
+        args::OutputFormat::Solution => {
+            for chunk in solution.chunks_exact(size as usize) {
+                print_iterator(w, chunk, log10(size))?;
+                w.write_all(b"\n")?;
+            }
+        }
+        args::OutputFormat::HeaderLine => {
+            let header = generate::solution_to_header(&solution, size);
+            print_iterator(w, header.as_ref(), 0)?;
+            w.write_all(b"\n")?;
+        }
+        args::OutputFormat::Header => {
+            print_both(w, &solution, size, false)?;
+        }
+        args::OutputFormat::Both => {
+            print_both(w, &solution, size, true)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Writes the elements of the provided iterator to the standard output. Each element is separated
