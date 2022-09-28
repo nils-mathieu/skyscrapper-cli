@@ -50,7 +50,6 @@ pub fn generate_solution(rng: &mut dyn RngCore, size: u8) -> Option<Box<[u8]>> {
             // In that case, we have to backtrack (or retry, if only one stacked slice is empty).
 
             index -= 1;
-            solution[index] = 0;
             stack_slices.pop();
         }
 
