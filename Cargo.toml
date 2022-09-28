@@ -1,0 +1,17 @@
+[package]
+name = "skyscrapper"
+version = "0.0.1"
+edition = "2021"
+authors = ["Nils Mathieu <nmathieu@student.42.fr>"]
+description = "a simply CLI tool to play the Skyscrapper game"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[dependencies]
+clap = { version = "3.2", features = ["derive", "wrap_help", "cargo", "unicode"] }
+rand = { version = "0.8" }
+termcolor = { version = "1.1" }
+ctrlc = { version = "3.2" }
