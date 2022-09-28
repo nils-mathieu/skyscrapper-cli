@@ -286,7 +286,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "skyscrapper"
+name = "skyscrapper-cli"
 version = "0.0.1"
 dependencies = [
  "clap",

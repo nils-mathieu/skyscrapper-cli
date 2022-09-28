@@ -1,9 +1,10 @@
 [package]
-name = "skyscrapper"
+name = "skyscrapper-cli"
 version = "0.0.1"
 edition = "2021"
 authors = ["Nils Mathieu <nmathieu@student.42.fr>"]
 description = "a simply CLI tool to play the Skyscrapper game"
+readme = "README.md"
 
 [profile.release]
 lto = true
