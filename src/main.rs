@@ -3,6 +3,7 @@ use std::io;
 use std::io::Write;
 
 use rand::SeedableRng;
+use rand_xoshiro::Xoroshiro128StarStar;
 
 pub mod args;
 pub mod generate;
@@ -25,8 +26,8 @@ fn main() {
             // If the user provided a set seed, create the pRNG with it, otherwise generate a
             // random seed.
             let mut rng = match seed {
-                Some(seed) => rand::rngs::StdRng::seed_from_u64(seed),
-                None => rand::rngs::StdRng::from_entropy(),
+                Some(seed) => Xoroshiro128StarStar::seed_from_u64(seed),
+                None => Xoroshiro128StarStar::from_entropy(),
             };
 
             // Generate the solution.
