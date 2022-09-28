@@ -18,7 +18,7 @@ pub enum OutputFormat {
     Header,
     /// Only print the header, on one single line.
     HeaderLine,
-    /// Print both.
+    /// Print both the header and the solution.
     Both,
 }
 
