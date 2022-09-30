@@ -15,7 +15,7 @@ panic = "abort"
 
 [dependencies]
 clap = { version = "3.2", features = ["derive", "wrap_help", "cargo", "unicode"] }
-rand = { version = "0.8", default-features = false, features = ["std"] }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 rand_xoshiro = "0.6"
 termcolor = "1.1"
 ctrlc = "3.2"

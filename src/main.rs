@@ -1,25 +1,32 @@
 use std::fmt::Display;
 use std::io;
 use std::io::Write;
+use std::process::ExitCode;
 
 use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128StarStar;
 
 pub mod args;
 pub mod generate;
+pub mod solve;
 
 mod sigint;
 
 /// The glorious entry point.
-fn main() {
+fn main() -> ExitCode {
     sigint::initialize();
     let args = args::parse();
+
+    let color_choice = if atty::is(atty::Stream::Stdout) {
+        termcolor::ColorChoice::Auto
+    } else {
+        termcolor::ColorChoice::Never
+    };
 
     match args.command {
         args::Command::Generate { output, seed, size } => {
             if size == 0 {
-                let _ = std::io::stdout().write_all(b"\n");
-                return;
+                return ExitCode::from(3);
             }
 
             // Setup a random number generator.
@@ -34,16 +41,10 @@ fn main() {
             let solution = match generate::generate_solution(&mut rng, size) {
                 Some(s) => s,
                 // The operation has been interrupted by a CTRL+C.
-                None => return,
+                None => return ExitCode::SUCCESS,
             };
 
             // Open the standard output.
-            let color_choice = if atty::is(atty::Stream::Stdout) {
-                termcolor::ColorChoice::Auto
-            } else {
-                termcolor::ColorChoice::Never
-            };
-
             let stdout = termcolor::StandardStream::stdout(color_choice);
             let mut stdout = stdout.lock();
 
@@ -62,6 +63,40 @@ fn main() {
                     let _ = print_solution(&mut stdout, &solution, size, output);
                 }
             }
+
+            ExitCode::SUCCESS
+        }
+        args::Command::Solve { header, output } => {
+            let size = header.0.len() / 4;
+
+            if size == 0 {
+                return ExitCode::from(3);
+            }
+
+            let solution = match solve::solve(&header.0, size) {
+                Ok(ok) => ok,
+                Err(solve::SolutionError::Interrupted) => return ExitCode::SUCCESS,
+                Err(solve::SolutionError::NoSolution) => {
+                    use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
+
+                    let stderr = StandardStream::stderr(color_choice);
+                    let mut stderr = stderr.lock();
+
+                    let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
+                    let _ = write!(stderr, "error");
+                    let _ = stderr.reset();
+                    let _ = writeln!(stderr, ": no solution found");
+
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let stdout = termcolor::StandardStream::stdout(color_choice);
+            let mut stdout = stdout.lock();
+
+            let _ = print_solution(&mut stdout, &solution, size as u8, &output);
+
+            ExitCode::SUCCESS
         }
     }
 }

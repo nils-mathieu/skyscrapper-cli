@@ -1,4 +1,9 @@
-/// Defines the [`Args`] structure.
+//! Defines the [`Args`] structure.
+
+use std::fmt;
+use std::fmt::Display;
+use std::str::FromStr;
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// A CLI tool to play the Skyscrapper game.
@@ -36,6 +41,93 @@ pub enum Command {
         /// The size of the board.
         size: u8,
     },
+    /// Solves a board given a specific header.
+    ///
+    /// The header must be provided using the same format as the one outputed by header-line.
+    Solve {
+        /// The header that will be solved.
+        header: Header,
+        /// The generated output.
+        #[clap(long, short = 'o', value_enum, default_value_t = OutputFormat::Both)]
+        output: OutputFormat,
+    },
+}
+
+/// An error that might occur whilst parsing a [`Header`] instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ParseHeaderError {
+    InvalidInteger,
+    InvalidViewCount,
+    TooManyViews,
+    ViewTooLarge,
+    ViewZero,
+}
+
+impl From<std::num::ParseIntError> for ParseHeaderError {
+    fn from(e: std::num::ParseIntError) -> Self {
+        use std::num::IntErrorKind::*;
+
+        if *e.kind() == PosOverflow {
+            Self::ViewTooLarge
+        } else {
+            Self::InvalidInteger
+        }
+    }
+}
+
+impl Display for ParseHeaderError {
+    #[rustfmt::skip]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::InvalidInteger => f.write_str("invalid integer found in header"),
+            Self::InvalidViewCount => f.write_str("invalid number of views (must be a multiple of 4)"),
+            Self::TooManyViews => f.write_str("it's not possible to solve a size larger than 255"),
+            Self::ViewTooLarge => f.write_str("views can't exceed the size of the board"),
+            Self::ViewZero => f.write_str("views can't be 0"),
+        }
+    }
+}
+
+impl std::error::Error for ParseHeaderError {}
+
+/// A simple wrapper around [`Box<[u8]>`] that gets parsed like a skyscrapper header line through
+/// its [`FromStr`] implementation.
+#[derive(Clone, Debug)]
+pub struct Header(pub Box<[u8]>);
+
+impl FromStr for Header {
+    type Err = ParseHeaderError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Each integer must be separated by one or more spaces.
+        let mut vec = Vec::new();
+
+        // TODO(nils): use try_collect() when stable.
+        for word in s.split_ascii_whitespace() {
+            let view = word.parse()?;
+            if view == 0 {
+                return Err(ParseHeaderError::ViewZero);
+            }
+            vec.push(view);
+        }
+
+        // Ensure that the total number of views is a multiple of 4.
+        if vec.len() % 4 != 0 {
+            return Err(ParseHeaderError::InvalidViewCount);
+        }
+
+        if vec.len() > 255 * 4 {
+            return Err(ParseHeaderError::TooManyViews);
+        }
+
+        let size = (vec.len() / 4) as u8;
+
+        if vec.iter().any(|&v| v > size) {
+            return Err(ParseHeaderError::ViewTooLarge);
+        }
+
+        Ok(Header(vec.into_boxed_slice()))
+    }
 }
 
 /// Parses the arguments passed to the program and parses then into an instance of [`Args`]. If an
