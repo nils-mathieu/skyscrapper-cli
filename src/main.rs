@@ -1,3 +1,5 @@
+#![allow(clippy::write_with_newline)]
+
 use std::fmt::Display;
 use std::io;
 use std::io::Write;
@@ -6,9 +8,9 @@ use std::process::ExitCode;
 use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128StarStar;
 
-pub mod args;
-pub mod generate;
-pub mod solve;
+mod args;
+mod generate;
+mod solve;
 
 mod sigint;
 

@@ -6,141 +6,109 @@ pub enum SolutionError {
 }
 
 pub fn solve(header: &[u8], size: usize) -> Result<Box<[u8]>, SolutionError> {
-    let mut solution: Box<[u8]> = (1..=size as u8).cycle().take(size * size).collect();
+    // This is the result of the operation.
+    //
+    // It is also used used to keep track of which numbers were already tested.
+    let mut result = vec![1u8; size * size].into_boxed_slice();
 
-    // The index of the line that's being computed.
-    let mut line = 0;
-    while line != size {
-        // Look for a valid permutation.
-        while !is_line_valid(&header, &solution, size, line) {
-            if crate::sigint::occured() {
-                return Err(SolutionError::Interrupted);
-            }
+    // The index of the search. Every item *before* that index is fixed, and every element *after*
+    // that index is yet to be tested.
+    let mut index = 0;
 
-            let slice = &mut solution[line * size..(line + 1) * size];
-            if !next_permutation(slice) {
-                // There is no more permutations available for this slice.
-                // We have to decrease the index and reset the permutation.
-                for i in 0..size {
-                    slice[i] = (i + 1) as u8;
-                }
-
-                line = line.checked_sub(1).ok_or(SolutionError::NoSolution)?;
-            }
+    loop {
+        if crate::sigint::occured() {
+            return Err(SolutionError::Interrupted);
         }
 
-        line += 1;
+        if is_board_valid(header, &result, size, index) {
+            // It works!
+            // Let's continue with the next index.
+            index += 1;
+
+            // We're out of bounds, meaning that the solution is complete!
+            if index >= result.len() {
+                break;
+            }
+        } else {
+            // It does not work.
+            // We need to try something else.
+            result[index] += 1;
+
+            while result[index] > size as u8 {
+                // We're out of options for this index. We have to backtrack.
+                result[index] = 1u8;
+
+                if index == 0 {
+                    // We're already at the begining!
+                    // There is no solution for that header.
+                    return Err(SolutionError::NoSolution);
+                }
+
+                index -= 1;
+                result[index] += 1;
+            }
+        }
     }
 
-    Ok(solution)
+    Ok(result)
 }
 
-/// Computes another permutation for the provided slice.
-fn next_permutation(slice: &mut [u8]) -> bool {
-    // Find the longest non-increasing suffix.
-    let mut pivot = usize::MAX;
-    for i in (0..slice.len() - 1).rev() {
-        if slice[i] < slice[i + 1] {
-            pivot = i;
-            break;
-        }
-    }
-    if pivot == usize::MAX {
-        return false;
-    }
+fn count_views(size: usize, map: &mut dyn FnMut(usize) -> u8) -> u8 {
+    let mut max_so_far = 0;
+    let mut views = 0;
 
-    // Look for the smallest element of the suffix that's greater than the pivot.
-    for i in (0..slice.len()).rev() {
-        if slice[i] > slice[pivot] {
-            slice.swap(i, pivot);
-            break;
+    for i in 0..size {
+        let val = map(i);
+        if val > max_so_far {
+            max_so_far = val;
+            views += 1;
         }
     }
 
-    // Reverse the new suffix.
-    slice[pivot + 1..].reverse();
-
-    true
+    views
 }
 
-fn is_line_valid(header: &[u8], solution: &[u8], size: usize, line: usize) -> bool {
-    let mut count;
-    let mut max;
+/// Determines whether the element placed at `index` is valid.
+///
+/// This function assumes that only elements *before* `index` are initialized.
+fn is_board_valid(header: &[u8], result: &[u8], size: usize, index: usize) -> bool {
+    let x = index % size;
+    let y = index / size;
 
-    // Check the views from the left.
-    count = 1;
-    max = solution[line * size];
-    for x in 1..size {
-        if solution[line * size + x] > max {
-            max = solution[line * size + x];
-            count += 1;
-        }
+    let item = result[index];
 
-        if count > header[2 * size + line] {
-            return false;
-        }
-    }
-
-    if count != header[2 * size + line] {
+    if (0..x).any(move |x| result[x + y * size] == item) {
+        // found double horizontally
         return false;
     }
 
-    // Check the views from the right.
-    count = 1;
-    max = solution[(line + 1) * size - 1];
-    for x in (0..size - 1).rev() {
-        if solution[line * size + x] > max {
-            max = solution[line * size + x];
-            count += 1;
-        }
-
-        if count > header[3 * size + line] {
-            return false;
-        }
-    }
-
-    if count != header[3 * size + line] {
+    if (0..y).any(move |y| result[x + y * size] == item) {
+        // found double vertically
         return false;
     }
 
-    // Check the views from the top.
-    for x in 0..size {
-        count = 1;
-        max = solution[x];
-        for y in 1..=line {
-            if solution[x + line * y] > max {
-                max = solution[x + line * y];
-                count += 1;
-            }
-
-            if count > header[x] {
-                return false;
-            }
+    if x == size - 1 {
+        if count_views(size, &mut move |x| result[x + y * size]) != header[size * 2 + y] {
+            // invalid view count from the left
+            return false;
         }
 
-        if count + size as u8 - max < header[x] {
+        if count_views(size, &mut move |x| result[size - x - 1 + y * size]) != header[size * 3 + y]
+        {
+            // invalid view count from the right
             return false;
         }
     }
 
-    if line == size - 1 {
-        for x in 0..size {
-            count = 1;
-            max = solution[size * size - size + x];
-            for y in (0..line).rev() {
-                if solution[x + line * y] > max {
-                    max = solution[x + line * y];
-                    count += 1;
-                }
+    if y == size - 1 {
+        if count_views(size, &mut move |y| result[x + y * size]) != header[x] {
+            // invalid view count from the top
+            return false;
+        }
 
-                if count > header[size + x] {
-                    return false;
-                }
-            }
-
-            if count != header[size + x] {
-                return false;
-            }
+        if count_views(size, &mut move |y| result[x + (size - y - 1) * size]) != header[size + x] {
+            // invalid view count from the bottom
+            return false;
         }
     }
 
