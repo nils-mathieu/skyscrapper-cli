@@ -47,6 +47,9 @@ pub enum Command {
     Solve {
         /// The header that will be solved.
         header: Header,
+        /// Whether the process should be animated.
+        #[clap(long, short, action)]
+        animate: bool,
         /// The generated output.
         #[clap(long, short = 'o', value_enum, default_value_t = OutputFormat::Both)]
         output: OutputFormat,
