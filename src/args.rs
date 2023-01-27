@@ -98,14 +98,20 @@ impl std::error::Error for ParseHeaderError {}
 #[derive(Clone, Debug)]
 pub struct Header(pub Box<[u8]>);
 
+// A string representing a "header" must follow the following properties:
+//
+// It's a space-separated list of numbers. The number of elements in that list must be divisible
+// by 4.
+//
+// Let call "n" the quarter of that size. Each element of the list must be between 1 and n
+// (included). n must fit in a u8.
 impl FromStr for Header {
     type Err = ParseHeaderError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Each integer must be separated by one or more spaces.
         let mut vec = Vec::new();
 
-        // TODO(nils): use try_collect() when stable.
+        // FIXME(nils): use try_collect() when stable.
         for word in s.split_ascii_whitespace() {
             let view = word.parse()?;
             if view == 0 {
@@ -114,7 +120,6 @@ impl FromStr for Header {
             vec.push(view);
         }
 
-        // Ensure that the total number of views is a multiple of 4.
         if vec.len() % 4 != 0 {
             return Err(ParseHeaderError::InvalidViewCount);
         }

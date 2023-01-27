@@ -6,6 +6,7 @@ use std::io;
 use crate::args;
 use crate::generate;
 
+/// Compute the floored 10-th logarithm of `size`.
 fn log10(mut size: u8) -> usize {
     let mut log10 = 0;
     while size != 0 {
@@ -13,6 +14,29 @@ fn log10(mut size: u8) -> usize {
         log10 += 1;
     }
     log10
+}
+
+/// Writes the elements of the provided iterator to the standard output. Each element is separated
+/// by exactly `max_len + 1` spaces.
+fn print_iterator<I: IntoIterator>(
+    w: &mut dyn termcolor::WriteColor,
+    it: I,
+    max_len: usize,
+) -> io::Result<()>
+where
+    I::Item: Display,
+{
+    let mut it = it.into_iter();
+
+    if let Some(first) = it.next() {
+        write!(w, "{first:<max_len$}")?;
+    }
+
+    for k in it {
+        write!(w, " {k:<max_len$}")?;
+    }
+
+    Ok(())
 }
 
 /// Prints the provided solution according to the provided output format.
@@ -54,30 +78,9 @@ pub fn print_solution(
     Ok(())
 }
 
-/// Writes the elements of the provided iterator to the standard output. Each element is separated
-/// by exactly `max_len + 1` spaces.
-fn print_iterator<I: IntoIterator>(
-    w: &mut dyn termcolor::WriteColor,
-    it: I,
-    max_len: usize,
-) -> io::Result<()>
-where
-    I::Item: Display,
-{
-    let mut it = it.into_iter();
-
-    if let Some(first) = it.next() {
-        write!(w, "{first:<max_len$}")?;
-    }
-
-    for k in it {
-        write!(w, " {k:<max_len$}")?;
-    }
-
-    Ok(())
-}
-
 /// Prints both the header and the solution together.
+///
+/// If `actually_display_solution` is `false`, only the surronding header is displayed.
 pub fn print_both(
     mut w: &mut dyn termcolor::WriteColor,
     solution: &[u8],
