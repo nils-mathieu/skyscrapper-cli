@@ -1,346 +1,382 @@
-//! Provides a way to solve Skyscrapper games.
+//! Provides ways to solve skyscrapper problems.
 
 use std::time::Duration;
 
 use termcolor::WriteColor;
 
-use crate::format;
-
+/// An error which may occur whilst trying to compute a solution.
 pub enum SolutionError {
-    Interrupted,
+    /// No solution was found for the provided header.
     NoSolution,
+    /// The alogithm has been interrupted.
+    Interrupted,
 }
 
-/// Keeps the state of a line of sight.
-///
-/// New skyscrappers are expected to be added from the nearest position to the farthest position.
-struct PushingLineOfSight {
-    /// The expected number of line of sights for this element.
-    expected: u8,
-    /// The maximums found so far.
+/// No solution is possible.
+struct NoSolution;
+
+/// Contains the values available for a given board cell.
+#[repr(transparent)]
+struct BoardCell([u8]);
+
+impl BoardCell {
+    /// Creates a new [`BoardCell`] instance.
     ///
-    /// In each tuple, the first element is the actual maximum, and the second element is the
-    /// number of elements "hidden" by this maximum (since the previous maximum).
-    maximums: Vec<(u8, u8)>,
-}
+    /// # Safety
+    ///
+    /// * This function assumes `slice` has a length of at least `2`.
+    /// * And that its first element is smaller than its length.
+    unsafe fn wrap_ref(slice: &[u8]) -> &Self {
+        debug_assert!(slice.len() >= 2);
+        debug_assert!((slice[0] as usize) < slice.len());
 
-impl PushingLineOfSight {
-    /// Creates a new [`PushingLineOfSight`].
-    pub fn empty(expected: u8, size: usize) -> Self {
-        Self {
-            expected,
-            maximums: Vec::with_capacity(size),
+        // SAFETY:
+        //  - `BoardCell` is a `#[repr(transparent)]` wrapper around `[u8]`.
+        unsafe { core::mem::transmute(slice) }
+    }
+
+    /// Creates a new [`BoardCell`] instance.
+    ///
+    /// # Safety
+    ///
+    /// * This function assumes `slice` has a length of at least `2`.
+    /// * And that its first element is smaller than its length.
+    unsafe fn wrap_mut(slice: &mut [u8]) -> &mut Self {
+        debug_assert!(slice.len() >= 2);
+        debug_assert!((slice[0] as usize) < slice.len());
+
+        // SAFETY:
+        //  - `BoardCell` is a `#[repr(transparent)]` wrapper around `[u8]`.
+        unsafe { core::mem::transmute(slice) }
+    }
+
+    /// Returns whether this cell accepts a certain value.
+    pub fn accepts(&self, value: u8) -> bool {
+        self.0.contains(&value)
+    }
+
+    /// Returns the number of element allowed for this cell.
+    pub fn count(&self) -> usize {
+        // SAFETY:
+        //  `BoardCell` knows that its slice has a length greater or equal to `2`.
+        unsafe { *self.0.get_unchecked(0) as usize }
+    }
+
+    /// Returns a slice over the values allowed by this cell.
+    pub fn slice(&self) -> &[u8] {
+        let len = self.count();
+
+        // SAFETY:
+        //  The slice is known to be large enough to store `len + 1` elements.
+        unsafe { self.0.get_unchecked(1..1 + len) }
+    }
+
+    /// Sets the value of this cell to `value`.
+    ///
+    /// Note that this function does not check whether the cell actually allows this value.
+    pub fn set(&mut self, value: u8) {
+        debug_assert!(self.accepts(value));
+
+        // SAFETY:
+        //  `BoardCell` knows that its length is greater or equal to `2`.
+        unsafe {
+            *self.0.get_unchecked_mut(0) = 1;
+            *self.0.get_unchecked_mut(1) = value;
         }
     }
 
-    /// Returns whether adding a skyscrapper of height `height` into this line of sight would
-    /// invalidate its requirements.
-    pub fn can_push(&self, size: u8, height: u8) -> bool {
-        let highest = match self.maximums.last() {
-            Some(&(highest_so_far, _)) => highest_so_far.max(height),
-            None => height,
-        };
-
-        let num_maxs = self.maximums.len() as u8 + (highest == height) as u8;
-        let min = num_maxs + (highest != size) as u8;
-        let max = num_maxs + size - highest;
-        min <= self.expected && self.expected <= max
-    }
-
-    /// Indicates that a new value has been added to the line of sight.
+    /// Tries to disallow a value for this cell.
     ///
-    /// This function assumes that the validity of the line of sight is preserved.
-    pub fn push(&mut self, height: u8) {
-        match self.maximums.last_mut() {
-            Some((highest_so_far, hidden)) => {
-                if *highest_so_far < height {
-                    self.maximums.push((height, 0));
-                } else {
-                    *hidden += 1;
-                }
+    /// If the value was already disallowed, `false` is returned. Otherwise, `true` is returned.
+    pub fn forbid(&mut self, value: u8) -> bool {
+        if let Some(pos) = self.slice().iter().position(|&b| b == value) {
+            unsafe {
+                // SAFETY:
+                //  The size of the inner slice is known to be larger than `2`.
+                *self.0.get_unchecked_mut(0) -= 1;
+                let len = *self.0.get_unchecked(0) as usize;
+
+                // SAFETY:
+                //  `pos` has been returned
+                *self.0.get_unchecked_mut(1 + pos) = *self.0.get_unchecked(1 + len);
             }
-            None => {
-                self.maximums.push((height, 0));
-            }
-        }
-    }
 
-    /// Pops the last value of this line-of-sight.
-    pub fn pop(&mut self) {
-        match self.maximums.last_mut() {
-            Some((_highest, hidden)) => {
-                if *hidden == 0 {
-                    self.maximums.pop();
-                } else {
-                    *hidden -= 1;
-                }
-            }
-            None => panic!("called `pop` when there was nothing to remove"),
-        }
-    }
-}
-
-/// Keeps the state of a line of sight.
-///
-/// New skyscrappers are expected to be added from the farthest position to the nearest position.
-pub struct PullingLineOfSight {
-    /// The number of views expected for this line of sight.
-    expected: u8,
-    /// The next skyscrapper height that this line of sight will see.
-    ///
-    /// The most up-to-date is the last one.
-    ///
-    /// The first element of each tuple is the actual value, and the second one is the number of
-    /// values that *will* be hidden by it once it is found.
-    next_highest: Vec<(u8, u8)>,
-    /// The remaining number of skyscrapper missing from this line of sight.
-    remaining: u8,
-}
-
-impl PullingLineOfSight {
-    /// Creates a new [`PullingLineOfSight`].
-    pub fn empty(expected: u8, size: usize) -> Self {
-        let mut next_highest = Vec::with_capacity(size);
-        next_highest.push((size as u8, 0));
-
-        Self {
-            expected,
-            next_highest,
-            remaining: size as u8,
-        }
-    }
-
-    /// Determines whether adding a new skyscrapper of height `height` would retain the validity
-    /// of this line of sight.
-    pub fn can_push(&self, height: u8) -> bool {
-        let mut maxs = self.next_highest.len() as u8 - 1;
-        maxs += (height == self.next_highest.last().unwrap().0) as u8;
-
-        let min = maxs + (self.remaining != 1) as u8;
-        let max = maxs + self.remaining - 1;
-        min <= self.expected && self.expected <= max
-    }
-
-    pub fn push(&mut self, seen: &[bool], height: u8) {
-        self.remaining -= 1;
-        let (next, hidden) = self.next_highest.last_mut().unwrap();
-        let mut next = *next;
-        if next == height {
-            loop {
-                next -= 1;
-                if next == 0 || !seen[next as usize - 1] {
-                    break;
-                }
-            }
-            self.next_highest.push((next, 0));
+            true
         } else {
-            *hidden += 1;
-        }
-    }
-
-    pub fn pop(&mut self) {
-        self.remaining += 1;
-        let (_next, hidden) = self.next_highest.last_mut().unwrap();
-        if *hidden == 0 {
-            self.next_highest.pop();
-        } else {
-            *hidden -= 1;
+            false
         }
     }
 }
 
-/// Stores the state of the board
-struct Board {
-    /// The actual output board.
-    board: Box<[u8]>,
-    /// The size of the board.
+/// Stores every possible value available for each cell of a board.
+struct BoardSet {
+    /// The backing array of this [`BoardSet`].
     ///
-    /// `board` is a `size * size` array. `header` is a `size * 4` array.
+    /// This array has a size of `size * size * (size + 1)` bytes. Where `size` is the size of the
+    /// input skyscrapper board.
+    ///
+    /// Each cell takes `size + 1` bytes. The first byte represents how many possible values the
+    /// cell has, and the `size` other bytes are the actual possible values.
+    ///
+    /// For example:
+    ///
+    /// ```txt
+    /// |3|1|2|5|4|3|
+    /// ```
+    ///
+    /// When a size of `5`, above cell accepts the values 1, 2, and 5. 3 values in total.
+    array: Box<[u8]>,
+    /// The size that was used to create the `BoardSet`.
+    ///
+    /// This tiny bit of redundancy makes the program much more safe and easy to use and maintain.
     size: usize,
-    /// For each line, then for each column, indicates which skyscrapper height is already present
-    /// on the board, and which is not.
-    ///
-    /// line0, line1, .., column0, column1, ..
-    height_presence: Box<[bool]>,
-    /// The "pushing" line of sights. top-to-botom, then left-to-right.
-    pushing_los: Box<[PushingLineOfSight]>,
-    /// The "pulling" line of sights. bottom-to-top, then right-to-left.
-    pulling_los: Box<[PullingLineOfSight]>,
-    /// The number of skyscrapper that were properly placed on the board.
-    index: usize,
-    /// The cached result of `index % size`.
-    x: usize,
-    /// The cached result of `index / size`.
-    y: usize,
-    /// The next potential candidate to be placed at `index`.
-    next_candidate: u8,
 }
 
-impl Board {
-    /// Creates a new, empty, [`Board`] instance.
-    pub fn empty(header: &[u8], size: usize) -> Self {
-        Self {
-            size,
-            board: std::iter::repeat(0u8).take(size * size).collect(),
-            height_presence: std::iter::repeat(false).take(size * size * 2).collect(),
-            index: 0,
-            pushing_los: (0..size)
-                .map(move |x| PushingLineOfSight::empty(header[x], size))
-                .chain(
-                    (0..size).map(move |y| PushingLineOfSight::empty(header[size * 2 + y], size)),
-                )
-                .collect(),
-            pulling_los: (0..size)
-                .map(move |x| PullingLineOfSight::empty(header[size + x], size))
-                .chain(
-                    (0..size).map(move |y| PullingLineOfSight::empty(header[size * 3 + y], size)),
-                )
-                .collect(),
-            x: 0,
-            y: 0,
-            next_candidate: 1,
-        }
-    }
-
-    /// Returns whether the board is complete.
-    #[inline(always)]
-    pub fn is_complete(&self) -> bool {
-        self.index == self.board.len()
-    }
-
-    /// Returns whether `height` is present on the given line.
-    #[inline]
-    pub fn is_height_on_line(&self, height: u8, line: usize) -> bool {
-        self.height_presence[line * self.size + height as usize - 1]
-    }
-
-    /// Sets whether `height` is present on the given line.
-    #[inline]
-    pub fn set_height_on_line(&mut self, height: u8, line: usize, yes: bool) {
-        self.height_presence[line * self.size + height as usize - 1] = yes;
-    }
-
-    /// Returns whether `height` is present on the given column.
-    #[inline]
-    pub fn is_height_on_column(&self, height: u8, column: usize) -> bool {
-        self.height_presence[self.size * self.size + column * self.size + height as usize - 1]
-    }
-
-    /// Sets whether `height` is present on the given column.
-    #[inline]
-    pub fn set_height_on_column(&mut self, height: u8, column: usize, yes: bool) {
-        self.height_presence[self.size * self.size + column * self.size + height as usize - 1] =
-            yes;
-    }
-
-    /// Assuming that every element of the board until (and not including `index`) are valid, this
-    /// function determines whether adding a skyscrapper of height `height` at `index` will
-    /// preserve its validity.
-    pub fn can_place(&self, height: u8) -> bool {
-        // Check if the newly placed skyscrapper doubles without another on the same line or
-        // column.
-        if self.is_height_on_line(height, self.y) || self.is_height_on_column(height, self.x) {
-            return false;
-        }
-
-        if !self.pushing_los[self.x].can_push(self.size as u8, height) {
-            return false;
-        }
-
-        if !self.pushing_los[self.size + self.y].can_push(self.size as u8, height) {
-            return false;
-        }
-
-        if !self.pulling_los[self.x].can_push(height) {
-            return false;
-        }
-
-        if !self.pulling_los[self.size + self.y].can_push(height) {
-            return false;
-        }
-
-        true
-    }
-
-    /// Find a valid skyscrapper to place at `index`, such that the board retains its validity.
+impl BoardSet {
+    /// Creates a new [`BoardSet`] instance.
     ///
-    /// If the function backtracked to the begining of the board, the function return `false`,
-    /// indicating that no solution is possible.
-    pub fn place_candidate(&mut self) -> bool {
-        while self.next_candidate <= self.size as u8 {
-            if self.can_place(self.next_candidate) {
-                // We have found a suitable height!
-                let s = self.size;
-                self.pushing_los[self.x].push(self.next_candidate);
-                self.pushing_los[s + self.y].push(self.next_candidate);
-                self.pulling_los[self.x].push(
-                    &self.height_presence[s * s + self.x * s..s * s + self.x * s + s],
-                    self.next_candidate,
-                );
-                self.pulling_los[self.size + self.y].push(
-                    &self.height_presence[self.y * s..self.y * s + s],
-                    self.next_candidate,
-                );
+    /// Every cell of the created board will accept every possible value.
+    pub fn new(size: usize) -> Self {
+        let mut array = Vec::with_capacity(size * size * (size + 1));
 
-                self.set_height_on_line(self.next_candidate, self.y, true);
-                self.set_height_on_column(self.next_candidate, self.x, true);
-                self.board[self.index] = self.next_candidate;
+        for _ in 0..size * size {
+            array.push(size as u8);
+            array.extend(1..=size as u8);
+        }
 
-                // Advance the index by one position.
-                self.index += 1;
-                self.x = self.index % self.size;
-                self.y = self.index / self.size;
-                self.next_candidate = 1;
+        debug_assert_eq!(array.len(), array.capacity());
+        debug_assert_eq!(array.capacity(), size * size * (size + 1));
 
-                return true;
+        Self {
+            array: array.into_boxed_slice(),
+            size,
+        }
+    }
+
+    /// Gets the state of a cell of this [`Board`].
+    ///
+    /// # Safety
+    ///
+    /// `index` must be the start of a cell bounary.
+    /// `index` must be on a cell bounary.
+    pub unsafe fn cell_mut(&mut self, index: usize) -> &mut BoardCell {
+        debug_assert_eq!(index % (self.size + 1), 0);
+        debug_assert!(index < self.array.len());
+
+        // SAFETY:
+        //  `index` is on a cell bounary, ensuring that this slice is in bounds.
+        let slice = unsafe { self.array.get_unchecked_mut(index..index + 1 + self.size) };
+
+        // SAFETY:
+        //  We know by invariant of `BoardSet` that each cell contains `size + 1` elements, ensuring
+        //  that both preconditions are validated.
+        unsafe { BoardCell::wrap_mut(slice) }
+    }
+
+    /// Gets the state of a cell of this [`Board`].
+    ///
+    /// # Safety
+    ///
+    /// `index` must be the start of a cell bounary.
+    pub unsafe fn cell(&self, index: usize) -> &BoardCell {
+        debug_assert_eq!(index % (self.size + 1), 0);
+        debug_assert!(index < self.array.len());
+
+        // SAFETY:
+        //  `index` is on a cell bounary, ensuring that this slice is in bounds.
+        let slice = unsafe { self.array.get_unchecked(index..index + 1 + self.size) };
+
+        // SAFETY:
+        //  We know by invariant of `BoardSet` that each cell contains `size + 1` elements, ensuring
+        //  that both preconditions are validated.
+        unsafe { BoardCell::wrap_ref(slice) }
+    }
+
+    /// Returns an iterator over the cells of this board.
+    pub fn cell_indices(&self) -> impl '_ + Clone + Iterator<Item = (usize, &BoardCell)> {
+        (0..self.size * self.size).map(move |i| {
+            let index = (self.size + 1) * i;
+            (index, unsafe { self.cell(index) })
+        })
+    }
+
+    fn _remove_duplicates(
+        &mut self,
+        x: usize,
+        y: usize,
+        value: u8,
+        now_fixed: &mut Vec<(usize, usize)>,
+    ) -> Result<(), NoSolution> {
+        for col in 0..self.size {
+            // Don't try to remove duplicates on the value that we just set.
+            if col == x {
+                continue;
             }
 
-            self.next_candidate += 1;
+            let index = (self.size + 1) * col + (self.size + 1) * self.size * y;
+            let cell = unsafe { self.cell_mut(index) };
+            if cell.forbid(value) {
+                match cell.count() {
+                    0 => return Err(NoSolution),
+                    1 => now_fixed.push((col, y)),
+                    _ => (),
+                }
+            };
         }
 
-        if self.index == 0 {
-            // No solution found.
-            return false;
+        for row in 0..self.size {
+            // Don't try to remove duplicates on the value that we just set.
+            if row == x {
+                continue;
+            }
+
+            let index = (self.size + 1) * x + (self.size + 1) * self.size * row;
+            let cell = unsafe { self.cell_mut(index) };
+            if cell.forbid(value) {
+                match cell.count() {
+                    0 => return Err(NoSolution),
+                    1 => now_fixed.push((x, row)),
+                    _ => (),
+                }
+            };
         }
 
-        // No candidate was suitable for this position.
-        // Something in the board is invalid. We have to backtrack.
-        self.index -= 1;
-        self.x = self.index % self.size;
-        self.y = self.index / self.size;
+        Ok(())
+    }
 
-        let old = self.board[self.index];
-        self.board[self.index] = 0;
-        self.set_height_on_line(old, self.y, false);
-        self.set_height_on_column(old, self.x, false);
-        self.next_candidate = old + 1;
+    /// Sets the provided cell to `value` and forbids duplicates around that value.
+    ///
+    /// # Safety
+    ///
+    /// * `x` and `y` must be in bounds.
+    /// * `subindex` must be in bounds.
+    pub unsafe fn set_and_remove_duplicates(
+        &mut self,
+        x: usize,
+        y: usize,
+        subindex: usize,
+        now_fixed: &mut Vec<(usize, usize)>,
+    ) -> Result<(), NoSolution> {
+        debug_assert!(x < self.size);
+        debug_assert!(y < self.size);
 
-        self.pushing_los[self.x].pop();
-        self.pushing_los[self.size + self.y].pop();
-        self.pulling_los[self.x].pop();
-        self.pulling_los[self.size + self.y].pop();
+        let index = (self.size + 1) * x + (self.size + 1) * self.size * y;
 
-        true
+        // SAFETY:
+        //  If `x` and `y` are in bounds, then `index` is a valid index.
+        let cell = unsafe { self.cell_mut(index) };
+
+        // SAFETY:
+        //  The caller must provide a valid subindex.
+        let value = unsafe { *cell.slice().get_unchecked(subindex) };
+
+        cell.set(value);
+
+        self._remove_duplicates(x, y, value, now_fixed)
+    }
+
+    /// Assumes that the cell `(x, y)` allows one value and forbids any duplicate in cells on the
+    /// same colum or row.
+    ///
+    /// If removing duplicates for a cell disallows *every* value, `NoSolution` is returned.
+    ///
+    /// The cells that now contain only one possible value are pushed to `now_fixed`.
+    ///
+    /// # Safety
+    ///
+    /// * `x` and `y` must be in bounds (less than the size).
+    /// * The cell at that position must allow exactly one value.
+    pub unsafe fn remove_duplicates_around(
+        &mut self,
+        x: usize,
+        y: usize,
+        now_fixed: &mut Vec<(usize, usize)>,
+    ) -> Result<(), NoSolution> {
+        debug_assert!(x < self.size);
+        debug_assert!(y < self.size);
+
+        let index = (self.size + 1) * x + (self.size + 1) * self.size * y;
+
+        // SAFETY:
+        //  If `x` and `y` are in bounds, then `index` is a valid index.
+        let cell = unsafe { self.cell(index) };
+
+        debug_assert_eq!(cell.count(), 1);
+
+        // SAFETY:
+        //  The caller must make sure that this cell contains at least one value.
+        let value = unsafe { *cell.slice().get_unchecked(0) };
+
+        self._remove_duplicates(x, y, value, now_fixed)
+    }
+}
+
+/// A board that remembers where it stopped backtracking.
+///
+/// This type is used to backtrack as far as possible witout having to clone the board.
+struct BacktrackingBoard {
+    /// The inner [`BoardSet`] instance.
+    set: BoardSet,
+    /// The index of the cell on which we are currently backtracking.
+    ///
+    /// This is always less than `size * size`.
+    ///
+    /// Every cell *before* that index are fixed to a single value.
+    current_index: usize,
+    /// The index of the value that we will choose next to backtrack.
+    ///
+    /// This is always in bound of the cell's possibilities.
+    current_subindex: usize,
+}
+
+impl BacktrackingBoard {
+    /// Tries to continue backtracking using the saved state.
+    ///
+    /// In case something goes wront (no solution possible), the state of the board is restored
+    /// using `restore` and `NoSolution` is returned.
+    ///
+    /// Otherwise, `Ok(())` is returned and the modified state is conserved.
+    ///
+    /// `buf` will be cleared and used during the algorithm.
+    pub fn try_backtrack(
+        &mut self,
+        restore: &BoardSet,
+        buf: &mut Vec<(usize, usize)>,
+    ) -> Result<(), NoSolution> {
+        buf.clear();
+
+        let x = self.current_index % self.set.size;
+        let y = self.current_index / self.set.size;
+
+        match unsafe {
+            self.set
+                .set_and_remove_duplicates(x, y, self.current_subindex, buf)
+        } {
+            Ok(()) => (),
+            Err(err) => {
+                self.set.array.copy_from_slice(&restore.array);
+                return Err(err);
+            }
+        }
+
+        while let Some((x, y)) = buf.pop() {
+            match unsafe { self.set.remove_duplicates_around(x, y, buf) } {
+                Ok(()) => (),
+                Err(err) => {
+                    self.set.array.copy_from_slice(&restore.array);
+                    return Err(err);
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
 /// Solves the provided header.
 pub fn solve(header: &[u8], size: usize) -> Result<Box<[u8]>, SolutionError> {
-    let mut board = Board::empty(header, size);
-
-    loop {
-        if crate::sigint::occured() {
-            return Err(SolutionError::Interrupted);
-        }
-
-        if !board.place_candidate() {
-            return Err(SolutionError::NoSolution);
-        }
-
-        if board.is_complete() {
-            return Ok(board.board);
-        }
-    }
+    let _ = (header, size);
+    todo!();
 }
 
 /// Solves the provided header, but animates the process.
@@ -350,26 +386,6 @@ pub fn solve_animated(
     w: &mut dyn WriteColor,
     interval: Duration,
 ) -> Result<Box<[u8]>, SolutionError> {
-    let mut board = Board::empty(header, size);
-
-    let _ = format::print_both(w, &board.board, header, size as u8, true);
-
-    loop {
-        if crate::sigint::occured() {
-            return Err(SolutionError::Interrupted);
-        }
-
-        if !board.place_candidate() {
-            return Err(SolutionError::NoSolution);
-        }
-
-        print!("\x1B[{}A\x1B[J", size + 2);
-        let _ = format::print_both(w, &board.board, header, size as u8, true);
-        std::thread::sleep(interval);
-
-        if board.is_complete() {
-            print!("\x1B[{}A\x1B[J", size + 2);
-            return Ok(board.board);
-        }
-    }
+    let _ = (header, size, w, interval);
+    todo!();
 }

@@ -9,12 +9,13 @@ license-file = "LICENSE.md"
 repository = "https://github.com/nils-mathieu/skyscrapper-cli"
 
 [profile.release]
+opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
 
 [dependencies]
-clap = { version = "3.2", features = ["derive", "wrap_help", "cargo", "unicode"] }
+clap = { version = "4", features = ["derive", "wrap_help", "cargo", "unicode"] }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 rand_xoshiro = "0.6"
 termcolor = "1.1"
