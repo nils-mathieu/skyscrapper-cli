@@ -537,6 +537,9 @@ impl BacktrackingBoard {
     //  Something else: we store the "original" board in the `BacktrackingBoard`. Meaning that the
     //  final stack of `BacktrackingBoard` instance will duplicate one board each.
     //
+    //  It's probably possible to multi-thread this. Each "fork" is independ from the others, and
+    //  we could spawn a new task for every possible subindex.
+    //
     /// Tries to continue backtracking using the current state. When an error occurs (no solution is
     /// possible from this state), the internal state is restored.
     ///
