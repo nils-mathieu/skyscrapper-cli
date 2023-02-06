@@ -2,6 +2,24 @@
 
 A simple CLI application that allows users to generate valid Skyscrapper boards.
 
+## Installation
+
+### Release Page
+
+If you are on linux x86_64, you can download the latest version of this tool from the [releases](https://github.com/nils-mathieu/skyscrapper-cli/releases) section on github.
+
+### Building From Source
+
+If you have Rust installed on your machine, you can use the following commands to download and compile it into a binary file.
+
+```txt
+git clone https://github.com/nils-mathieu/skyscrapper-cli
+cd skyscrapper-cli
+cargo build --release
+```
+
+The result of that command will usually be located in `target/release/skyscrapper-cli`, but that might change if you have defined a custom target directory for Cargo.
+
 ## Examples
 
 Basic usage:
@@ -102,18 +120,4 @@ Or check whether a given solution is valid or not.
 EOF
 >_ echo $?
 0
-```
-
-## Installation
-
-At the moment, this tool is still in early developement, some other features are planned, and no binary is directly available.
-
-If you have Rust installed on your machine, you can use the following commands to download and compile it into a binary file.
-
-```txt
-git clone https://github.com/nils-mathieu/skyscrapper-cli
-cd skyscrapper-cli
-cargo build --release
-TARGET_DIR=$(cargo metadata --format-version=1 | grep -o '"target_directory":"[^"]*"' | grep -o '"[^"]*"$' | grep -o '[^"]*')
-echo "output build located at $TARGET_DIR/release/skyscrapper-cli"
 ```
