@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use termcolor::WriteColor;
 
+use crate::sigint;
+
 /// An error which may occur whilst trying to compute a solution.
 pub enum SolutionError {
     /// No solution was found for the provided header.
@@ -14,6 +16,12 @@ pub enum SolutionError {
 
 /// No solution is possible.
 struct NoSolution;
+
+impl From<NoSolution> for SolutionError {
+    fn from(_value: NoSolution) -> Self {
+        Self::NoSolution
+    }
+}
 
 /// Contains the values available for a given board cell.
 #[repr(transparent)]
@@ -73,15 +81,19 @@ impl BoardCell {
 
     /// Sets the value of this cell to `value`.
     ///
-    /// Note that this function does not check whether the cell actually allows this value.
-    pub fn set(&mut self, value: u8) {
-        debug_assert!(self.accepts(value));
+    /// If the cell forbids the provided value, an error is returned.
+    pub fn set(&mut self, value: u8) -> Result<(), NoSolution> {
+        if self.accepts(value) {
+            // SAFETY:
+            //  `BoardCell` knows that its length is greater or equal to `2`.
+            unsafe {
+                *self.0.get_unchecked_mut(0) = 1;
+                *self.0.get_unchecked_mut(1) = value;
+            }
 
-        // SAFETY:
-        //  `BoardCell` knows that its length is greater or equal to `2`.
-        unsafe {
-            *self.0.get_unchecked_mut(0) = 1;
-            *self.0.get_unchecked_mut(1) = value;
+            Ok(())
+        } else {
+            Err(NoSolution)
         }
     }
 
@@ -109,6 +121,7 @@ impl BoardCell {
 }
 
 /// Stores every possible value available for each cell of a board.
+#[derive(Clone)]
 struct BoardSet {
     /// The backing array of this [`BoardSet`].
     ///
@@ -192,12 +205,112 @@ impl BoardSet {
         unsafe { BoardCell::wrap_ref(slice) }
     }
 
-    /// Returns an iterator over the cells of this board.
-    pub fn cell_indices(&self) -> impl '_ + Clone + Iterator<Item = (usize, &BoardCell)> {
-        (0..self.size * self.size).map(move |i| {
-            let index = (self.size + 1) * i;
-            (index, unsafe { self.cell(index) })
-        })
+    /// Account for a specific header value associated with a collection of indices.
+    ///
+    /// Cells that are set to a single value are added to `buf`.
+    ///
+    /// # Safety
+    ///
+    /// `indices` must return valid cell coordinates.
+    unsafe fn _account_for_header(
+        &mut self,
+        value: u8,
+        mut indices: impl Iterator<Item = (usize, usize)>,
+        buf: &mut Vec<(usize, usize)>,
+    ) -> Result<(), NoSolution> {
+        let size = self.size as u8;
+
+        if value == 1 {
+            // The value one only allows for the maximum value directly before itself.
+            let (x, y) = indices.next().unwrap();
+            let index = x * (self.size + 1) + y * (self.size + 1) * self.size;
+            // SAFETY:
+            //  The iterator must provide valid cell indices.
+            let cell = unsafe { self.cell_mut(index) };
+            cell.set(size)?;
+            buf.push((x, y));
+            return Ok(());
+        } else if value == self.size as u8 {
+            // The maximum value only allows one configuration.
+            for (i, (x, y)) in indices.enumerate() {
+                let index = x * (self.size + 1) + y * (self.size + 1) * self.size;
+                // SAFETY:
+                //  The iterator must provide valid indices.
+                let cell = unsafe { self.cell_mut(index) };
+
+                cell.set((i + 1) as u8)?;
+                buf.push((x, y));
+            }
+            return Ok(());
+        }
+
+        for (i, (x, y)) in indices.enumerate() {
+            let index = x * (self.size + 1) + y * self.size * (self.size + 1);
+
+            // SAFETY:
+            //  `indices` must yield valid cell indices.
+            let cell = unsafe { self.cell_mut(index) };
+
+            let first_to_remove = size - value + 2 + i as u8;
+            for to_remove in first_to_remove..=size {
+                if cell.forbid(to_remove) {
+                    match cell.count() {
+                        0 => return Err(NoSolution),
+                        1 => buf.push((x, y)),
+                        _ => (),
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // TODO:
+    //  This function seems to add the same coordinates multiple times (up to four times in the
+    //  worst case) to the buffer. Being able to mitigate that would be great.
+    //
+    /// Modifies the allowed values for each cell of this board using the provided header-line.
+    pub fn account_for_header(
+        &mut self,
+        header: &[u8],
+        buf: &mut Vec<(usize, usize)>,
+    ) -> Result<(), NoSolution> {
+        let size = self.size;
+
+        assert_eq!(header.len(), size * 4);
+
+        for col in 0..size {
+            // SAFETY:
+            //  We know that the header has a size of `size * 4`.
+            let views_from_top = unsafe { *header.get_unchecked(col) };
+
+            unsafe {
+                self._account_for_header(views_from_top, (0..size).map(|y| (col, y)), buf)?;
+            }
+
+            let views_from_bottom = unsafe { *header.get_unchecked(size + col) };
+
+            unsafe {
+                self._account_for_header(views_from_bottom, (0..size).rev().map(|y| (col, y)), buf)
+            }?;
+        }
+
+        for row in 0..size {
+            let views_from_left = unsafe { *header.get_unchecked(size * 2 + row) };
+
+            unsafe {
+                self._account_for_header(views_from_left, (0..size).map(|x| (x, row)), buf)?;
+            }
+
+            let views_from_right = unsafe { *header.get_unchecked(size * 3 + row) };
+
+            unsafe {
+                self._account_for_header(views_from_right, (0..size).rev().map(|x| (x, row)), buf)?;
+            }
+        }
+
+        Ok(())
     }
 
     fn _remove_duplicates(
@@ -207,6 +320,7 @@ impl BoardSet {
         value: u8,
         now_fixed: &mut Vec<(usize, usize)>,
     ) -> Result<(), NoSolution> {
+        // same line
         for col in 0..self.size {
             // Don't try to remove duplicates on the value that we just set.
             if col == x {
@@ -224,9 +338,10 @@ impl BoardSet {
             };
         }
 
+        // same column
         for row in 0..self.size {
             // Don't try to remove duplicates on the value that we just set.
-            if row == x {
+            if row == y {
                 continue;
             }
 
@@ -270,7 +385,7 @@ impl BoardSet {
         //  The caller must provide a valid subindex.
         let value = unsafe { *cell.slice().get_unchecked(subindex) };
 
-        cell.set(value);
+        cell.set(value)?;
 
         self._remove_duplicates(x, y, value, now_fixed)
     }
@@ -309,12 +424,42 @@ impl BoardSet {
 
         self._remove_duplicates(x, y, value, now_fixed)
     }
+
+    /// Removes the duplicates around the values specified in the provided vector, leaving that
+    /// vector empty.
+    pub fn remove_duplicates_in(
+        &mut self,
+        buf: &mut Vec<(usize, usize)>,
+    ) -> Result<(), NoSolution> {
+        while let Some((x, y)) = buf.pop() {
+            unsafe { self.remove_duplicates_around(x, y, buf)? };
+        }
+
+        Ok(())
+    }
+
+    /// Assumes that the board is complete and turns it into a normal board.
+    pub fn create_board(&self) -> Box<[u8]> {
+        (0..self.size * self.size)
+            .map(|i| {
+                let index = i * (self.size + 1);
+                let cell = unsafe { self.cell(index) };
+                if cell.count() == 1 {
+                    cell.slice()[0]
+                } else {
+                    0
+                }
+            })
+            .collect()
+    }
 }
 
 /// A board that remembers where it stopped backtracking.
 ///
 /// This type is used to backtrack as far as possible witout having to clone the board.
 struct BacktrackingBoard {
+    /// The original [`BoardSet`], used when actually backtracking.
+    original: BoardSet,
     /// The inner [`BoardSet`] instance.
     set: BoardSet,
     /// The index of the cell on which we are currently backtracking.
@@ -329,54 +474,133 @@ struct BacktrackingBoard {
     current_subindex: usize,
 }
 
+/// An error which may occur when backtracking.
+#[derive(Debug)]
+enum BacktrackError {
+    /// There is no solution.
+    NoSolution,
+    /// No solition was found during *this* try, but it's still possible try again.
+    Retry,
+}
+
 impl BacktrackingBoard {
-    /// Tries to continue backtracking using the saved state.
+    /// Creates a new [`BacktrackingBoard`] from the provided [`BoardSet`].
     ///
-    /// In case something goes wront (no solution possible), the state of the board is restored
-    /// using `restore` and `NoSolution` is returned.
-    ///
-    /// Otherwise, `Ok(())` is returned and the modified state is conserved.
-    ///
-    /// `buf` will be cleared and used during the algorithm.
-    pub fn try_backtrack(
-        &mut self,
-        restore: &BoardSet,
-        buf: &mut Vec<(usize, usize)>,
-    ) -> Result<(), NoSolution> {
+    /// If the provided board is already complete, the function returns [`Err`] with the input
+    /// [`BoardSet`].
+    pub fn new(set: BoardSet) -> Result<Self, BoardSet> {
+        let mut current_index = 0;
+
+        while current_index < set.size * set.size
+            && unsafe { set.cell(current_index * (set.size + 1)) }.count() == 1
+        {
+            current_index += 1;
+        }
+
+        if current_index == set.size * set.size {
+            return Err(set);
+        }
+
+        Ok(Self {
+            original: set.clone(),
+            set,
+            current_index,
+            current_subindex: 0,
+        })
+    }
+
+    fn _try_backtrack(&mut self, buf: &mut Vec<(usize, usize)>) -> Result<(), NoSolution> {
         buf.clear();
 
         let x = self.current_index % self.set.size;
         let y = self.current_index / self.set.size;
 
-        match unsafe {
+        unsafe {
             self.set
-                .set_and_remove_duplicates(x, y, self.current_subindex, buf)
-        } {
-            Ok(()) => (),
-            Err(err) => {
-                self.set.array.copy_from_slice(&restore.array);
-                return Err(err);
-            }
+                .set_and_remove_duplicates(x, y, self.current_subindex, buf)?
+        };
+
+        self.set.remove_duplicates_in(buf)
+    }
+
+    // TODO: possible optimization
+    //  If we store the total number of "one" cells, we can check easily whether the board is
+    //  complete or not, AND we can start backtracking on the cells that are the most efficient
+    //  with the least amount of possibilities. We might even be able to cache this too to save
+    //  the lookup.
+    //
+    //  At the moment, we are backtracking from top-left to bottom-right and we know that we're done
+    //  when the backtracking index reaches the end; meaning that `remove_duplicates_around` is not
+    //  as optimized as it could be. In this state, we could simply check for duplicates *after*
+    //  the input index.
+    //
+    //  Something else: we store the "original" board in the `BacktrackingBoard`. Meaning that the
+    //  final stack of `BacktrackingBoard` instance will duplicate one board each.
+    //
+    /// Tries to continue backtracking using the current state. When an error occurs (no solution is
+    /// possible from this state), the internal state is restored.
+    ///
+    /// Calling this function again in case of error always produces an error.
+    ///
+    /// Otherwise, `Ok(())` is returned and the modified state is conserved.
+    ///
+    /// `buf` will be cleared and used during the algorithm.
+    pub fn try_backtrack(&mut self, buf: &mut Vec<(usize, usize)>) -> Result<(), BacktrackError> {
+        self.set.array.copy_from_slice(&self.original.array);
+
+        let count = unsafe { self.set.cell(self.current_index * (self.set.size + 1)) }.count();
+        if self.current_subindex == count {
+            // We are out of possible values. There is no possible solution.
+            return Err(BacktrackError::NoSolution);
         }
 
-        while let Some((x, y)) = buf.pop() {
-            match unsafe { self.set.remove_duplicates_around(x, y, buf) } {
-                Ok(()) => (),
-                Err(err) => {
-                    self.set.array.copy_from_slice(&restore.array);
-                    return Err(err);
-                }
-            }
+        let result = self._try_backtrack(buf);
+        self.current_subindex += 1;
+        match result {
+            Ok(()) => Ok(()),
+            Err(_) => Err(BacktrackError::Retry),
         }
-
-        Ok(())
     }
 }
 
 /// Solves the provided header.
 pub fn solve(header: &[u8], size: usize) -> Result<Box<[u8]>, SolutionError> {
-    let _ = (header, size);
-    todo!();
+    let mut buf = Vec::new();
+    let mut set = BoardSet::new(size);
+    set.account_for_header(header, &mut buf)?;
+    set.remove_duplicates_in(&mut buf)?;
+
+    let mut backtrackers = Vec::new();
+
+    match BacktrackingBoard::new(set) {
+        Ok(ok) => backtrackers.push(ok),
+        Err(complete) => return Ok(complete.create_board()),
+    };
+
+    loop {
+        if sigint::occured() {
+            return Err(SolutionError::Interrupted);
+        }
+
+        let backtracker = backtrackers.last_mut().unwrap();
+        match backtracker.try_backtrack(&mut buf) {
+            // TODO:
+            //  calling `new` here re-computes `current_index` from the start. We should create a
+            //  special `new_backtracking_fork` function that keeps the index (or something like
+            //  that).
+            Ok(()) => match BacktrackingBoard::new(backtracker.set.clone()) {
+                Ok(ok) => backtrackers.push(ok),
+                Err(complete) => return Ok(complete.create_board()),
+            },
+            Err(BacktrackError::NoSolution) => {
+                backtrackers.pop();
+                if backtrackers.is_empty() {
+                    return Err(SolutionError::NoSolution);
+                }
+            }
+            Err(BacktrackError::Retry) => (),
+        }
+    }
 }
 
 /// Solves the provided header, but animates the process.
@@ -386,6 +610,51 @@ pub fn solve_animated(
     w: &mut dyn WriteColor,
     interval: Duration,
 ) -> Result<Box<[u8]>, SolutionError> {
-    let _ = (header, size, w, interval);
-    todo!();
+    let mut buf = Vec::new();
+    let mut set = BoardSet::new(size);
+    set.account_for_header(header, &mut buf)?;
+    set.remove_duplicates_in(&mut buf)?;
+
+    let mut backtrackers = Vec::new();
+
+    match BacktrackingBoard::new(set) {
+        Ok(ok) => backtrackers.push(ok),
+        Err(complete) => return Ok(complete.create_board()),
+    };
+
+    loop {
+        if sigint::occured() {
+            return Err(SolutionError::Interrupted);
+        }
+
+        let backtracker = backtrackers.last_mut().unwrap();
+
+        print!("\x1B[{}A\x1B[J", size + 2);
+        let _ = crate::format::print_solution(
+            w,
+            &backtracker.set.create_board(),
+            header,
+            size as u8,
+            &crate::args::OutputFormat::Both,
+        );
+        std::thread::sleep(interval);
+
+        match backtracker.try_backtrack(&mut buf) {
+            // TODO:
+            //  calling `new` here re-computes `current_index` from the start. We should create a
+            //  special `new_backtracking_fork` function that keeps the index (or something like
+            //  that).
+            Ok(()) => match BacktrackingBoard::new(backtracker.set.clone()) {
+                Ok(ok) => backtrackers.push(ok),
+                Err(complete) => return Ok(complete.create_board()),
+            },
+            Err(BacktrackError::NoSolution) => {
+                backtrackers.pop();
+                if backtrackers.is_empty() {
+                    return Err(SolutionError::NoSolution);
+                }
+            }
+            Err(BacktrackError::Retry) => (),
+        }
+    }
 }
