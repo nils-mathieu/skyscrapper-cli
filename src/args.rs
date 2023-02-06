@@ -54,6 +54,13 @@ pub enum Command {
         #[clap(long, short = 'o', value_enum, default_value_t = OutputFormat::Both)]
         output: OutputFormat,
     },
+    /// Determines whether a given response is valid.
+    ///
+    /// This command expects the board to be provided without its header in its standard input.
+    Check {
+        /// The header that the board will be verified against.
+        header: Header,
+    },
 }
 
 /// An error that might occur whilst parsing a [`Header`] instance.

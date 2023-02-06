@@ -1,6 +1,6 @@
 #![allow(clippy::write_with_newline)]
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -8,6 +8,7 @@ use rand::SeedableRng;
 use rand_xoshiro::Xoroshiro128StarStar;
 
 mod args;
+mod check;
 mod format;
 mod generate;
 mod solve;
@@ -117,6 +118,120 @@ fn main() -> ExitCode {
             let _ = format::print_solution(&mut stdout, &solution, &header.0, size as u8, &output);
 
             ExitCode::SUCCESS
+        }
+        args::Command::Check { header } => {
+            use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
+
+            let mut board = Vec::new();
+            match std::io::stdin().read_to_end(&mut board) {
+                Ok(_) => (),
+                Err(_) => {
+                    let stderr = StandardStream::stderr(color_choice);
+                    let mut stderr = stderr.lock();
+
+                    let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
+                    let _ = write!(stderr, "error");
+                    let _ = stderr.reset();
+                    let _ = writeln!(stderr, ": failed to read the standard input");
+
+                    return ExitCode::FAILURE;
+                }
+            }
+            match check::check(&header.0, header.0.len() / 4, &board) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    let stderr = StandardStream::stderr(color_choice);
+                    let mut stderr = stderr.lock();
+
+                    let mut last = 0;
+                    for &check::Span { start, end } in &err.spans {
+                        let _ = stderr.write_all(&board[last..start]);
+                        let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
+                        let _ = stderr.write_all(&board[start..end]);
+                        let _ = stderr.reset();
+                        last = end;
+                    }
+                    let _ = stderr.write_all(&board[last..]);
+
+                    let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)));
+                    let _ = write!(stderr, "error");
+                    let _ = stderr.reset();
+
+                    match err.kind {
+                        check::BoardErrorKind::InvalidNumber => {
+                            let _ = write!(stderr, ": `");
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let &check::Span { start, end } = err.spans.first().unwrap();
+                            let _ = stderr.write_all(&board[start..end]);
+                            let _ = stderr.reset();
+                            let _ = writeln!(stderr, "` is not a valid number");
+                        }
+                        check::BoardErrorKind::ColumnCount { expected, given } => {
+                            let _ = write!(stderr, ": expected {} columns, found ", expected);
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let _ = writeln!(stderr, "{given}");
+                            let _ = stderr.reset();
+                        }
+                        check::BoardErrorKind::RowCount { expected, given } => {
+                            let _ = write!(stderr, ": expected {} rows, found ", expected);
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let _ = writeln!(stderr, "{given}");
+                            let _ = stderr.reset();
+                        }
+                        check::BoardErrorKind::UnexpectedCharacter(c) => {
+                            let _ = write!(stderr, ": character `");
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let _ = write!(stderr, "{}", c.escape_ascii());
+                            let _ = stderr.reset();
+                            let _ = writeln!(stderr, "` was not expected");
+                        }
+                        check::BoardErrorKind::TopToBottom { expected, given } => {
+                            let _ = write!(
+                                stderr,
+                                ": from top to bottom, expected view count of {expected}, got "
+                            );
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let _ = writeln!(stderr, "{}", given);
+                            let _ = stderr.reset();
+                        }
+                        check::BoardErrorKind::BottomToTop { expected, given } => {
+                            let _ = write!(
+                                stderr,
+                                ": from bottom to top, expected view count of {expected}, got "
+                            );
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let _ = writeln!(stderr, "{}", given);
+                            let _ = stderr.reset();
+                        }
+                        check::BoardErrorKind::LeftToRight { expected, given } => {
+                            let _ = write!(
+                                stderr,
+                                ": from left to right, expected view count of {expected}, got "
+                            );
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let _ = writeln!(stderr, "{}", given);
+                            let _ = stderr.reset();
+                        }
+                        check::BoardErrorKind::RightToLeft { expected, given } => {
+                            let _ = write!(
+                                stderr,
+                                ": from right to left, expected view count of {expected}, got "
+                            );
+                            let _ = stderr.set_color(ColorSpec::new().set_fg(Some(Color::Yellow)));
+                            let _ = writeln!(stderr, "{}", given);
+                            let _ = stderr.reset();
+                        }
+                        check::BoardErrorKind::Doubles => {
+                            let _ = writeln!(
+                                stderr,
+                                ": found twice the same number on the same row/column"
+                            );
+                        }
+                    }
+
+                    ExitCode::FAILURE
+                }
+            }
         }
     }
 }
