@@ -79,6 +79,31 @@ If you want reproductible results, you can use the `--seed` option. Using twice 
   1 4 2 3 2
 ```
 
+It's possible to solve the skyscrapper problem using a given header-line.
+
+```txt
+>_ ./skyscrapper-cli solve "1 4 2 2 3 1 3 2 1 2 3 2 3 2 1 2"
+  1 4 2 2
+1 4 1 3 2 3
+2 3 2 4 1 2
+3 1 3 2 4 1
+2 2 4 1 3 2
+  3 1 3 2
+```
+
+Or check whether a given solution is valid or not.
+
+```txt
+>_ << EOF ./skyscrapper-cli check "1 4 2 2 3 1 3 2 1 2 3 2 3 2 1 2"
+4 1 3 2
+3 2 4 1
+1 3 2 4
+2 4 1 3
+EOF
+>_ echo $?
+0
+```
+
 ## Installation
 
 At the moment, this tool is still in early developement, some other features are planned, and no binary is directly available.
