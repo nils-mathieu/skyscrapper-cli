@@ -615,6 +615,14 @@ pub fn solve_animated(
     set.account_for_header(header, &mut buf)?;
     set.remove_duplicates_in(&mut buf)?;
 
+    let _ = crate::format::print_solution(
+        w,
+        &set.create_board(),
+        header,
+        size as u8,
+        &crate::args::OutputFormat::Both,
+    );
+
     let mut backtrackers = Vec::new();
 
     match BacktrackingBoard::new(set) {
@@ -646,7 +654,10 @@ pub fn solve_animated(
             //  that).
             Ok(()) => match BacktrackingBoard::new(backtracker.set.clone()) {
                 Ok(ok) => backtrackers.push(ok),
-                Err(complete) => return Ok(complete.create_board()),
+                Err(complete) => {
+                    print!("\x1B[{}A\x1B[J", size + 2);
+                    return Ok(complete.create_board());
+                }
             },
             Err(BacktrackError::NoSolution) => {
                 backtrackers.pop();
