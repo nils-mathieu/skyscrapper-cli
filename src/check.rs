@@ -110,7 +110,7 @@ fn parse_board(board: &[u8], size: u8) -> Result<Box<[BoardCell]>, BoardError> {
                 b'0'..=b'9' => i += 1,
                 _ => match parse(&board[n_start..i]) {
                     Some(value) => {
-                        if value > size {
+                        if value > size || value == 0 {
                             return Err(BoardError {
                                 kind: BoardErrorKind::InvalidNumber,
                                 spans: vec![Span {
