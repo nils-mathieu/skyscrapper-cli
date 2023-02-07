@@ -248,7 +248,10 @@ pub fn check(header: &[u8], size: usize, board: &[u8]) -> Result<(), BoardError>
                     expected: header[size * 2 + i],
                     given: from_left,
                 },
-                spans: vec![board[i * size].span, board[i * size + size - 1].span],
+                spans: vec![Span {
+                    start: board[i * size].span.start,
+                    end: board[i * size + size - 1].span.end,
+                }],
             });
         }
 

@@ -251,6 +251,9 @@ impl BoardSet {
             //  `indices` must yield valid cell indices.
             let cell = unsafe { self.cell_mut(index) };
 
+            // TODO: optimization
+            //  Create a `forbid_greater` that removes all elements that are greater than a given
+            //  value. That would be fore efficient than calling `forbid` in a loop.
             let first_to_remove = size - value + 2 + i as u8;
             for to_remove in first_to_remove..=size {
                 if cell.forbid(to_remove) {
@@ -266,7 +269,7 @@ impl BoardSet {
         Ok(())
     }
 
-    // TODO:
+    // TODO: optimization
     //  This function seems to add the same coordinates multiple times (up to four times in the
     //  worst case) to the buffer. Being able to mitigate that would be great.
     //
@@ -359,6 +362,13 @@ impl BoardSet {
         Ok(())
     }
 
+    // FIXME: error
+    //  Placing an element on the board may remove more than duplicates! Specifially, placing
+    //  a greater element *after* this one may create to many views. When that is the case, we have
+    //  to remove any element smaller than our value.
+    //  We will need a `forbid_less` function. At this point, maybe create a `retain` method would
+    //  be better. And `forbid` should be renamed `remove`, it's clearer this way.
+    //
     /// Sets the provided cell to `value` and forbids duplicates around that value.
     ///
     /// # Safety
